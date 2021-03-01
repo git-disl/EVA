@@ -12,4 +12,7 @@
 
 | Online Detection on A Single NCS2 <br/> (YOLOv3, with dropped frames) | Online Detection on 6 Single NCS2 <br/> (YOLOv3, demo) |
 |:---:|:---:|
-| [![ETH-Sunnyday Online Detection (YOLOv3, 1 NCS2, with dropped frames)](https://j.gifs.com/QnQVZL.gif)](https://youtu.be/ZIks3oOGx8M) | [![ETH-Sunnyday Online Detection (YOLOv3, 6 NCS2)](https://j.gifs.com/xnPZqq.gif)](https://youtu.be/0xu_d2RJ6YA) |
+| [![ETH-Sunnyday Online Detection (YOLOv3, 1 NCS2, with dropped frames)](https://j.gifs.com/oVDN2j.gif)](https://youtu.be/ZIks3oOGx8M) | [![ETH-Sunnyday Online Detection (YOLOv3, 6 NCS2)](https://j.gifs.com/k8yJR5.gif)](https://youtu.be/0xu_d2RJ6YA) |
+
+
+ETH-Sunnyday Online Detection (YOLOv3, 1 NCS2, with dropped frames)
