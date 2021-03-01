@@ -1,15 +1,19 @@
+<script src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML" type="text/javascript"></script>
+
 # EVA:  Edge Video Analytics
 
 ## Demo Videos
 
+- $\sigma$: actual frame processing rate on NCS2
+- $\lambda$: the incoming video stream rate 
+- $\mu$: frame processing rate at no frame dropping
+
 ### ETH-Sunnyday
 
-| Original Video | Slow Online Detection on A Single NCS2 <br/> (YOLOv3, no dropped frame) |
+| Original Video ($\lambda$ = 14 FPS) | Online Detection on one NCS2 <br/> (YOLOv3, $\sigma$ is set to $\mu$) <br/> $\sigma$ = 2.5, $\lambda$ = 14, $\mu$ = 2.5 |
 |:---:|:---:|
-| [![ETH-Sunnyday Original Video](https://j.gifs.com/MwM00O.gif)](https://youtu.be/BZZCMvbAKv0) | [![ETH-Sunnyday Slow Online Detection (YOLOv3, 1 NCS2, no dropped frame)](https://j.gifs.com/p8EGGp.gif)](https://youtu.be/jFWfrZqeCUw) |
+| [![ETH-Sunnyday Original Video](https://j.gifs.com/MwM00O.gif)](https://youtu.be/BZZCMvbAKv0) | [![ETH-Sunnyday Slow Online Detection (YOLOv3, 1 NCS2, $\sigma$ is set to $\mu$)](https://j.gifs.com/p8EGGp.gif)](https://youtu.be/jFWfrZqeCUw) |
 
-#### Online Real-time Object Detection
-
-| Online Detection on A Single NCS2 <br/> (YOLOv3, with dropped frames, low precision) | Online Detection on 6 Single NCS2 <br/> (YOLOv3, demo) |
+| Online Detection on one NCS2 <br/> (YOLOv3, $\sigma$ is set to $\lambda$) <br/> cause large random frame dropping <br/> $\sigma$ = 14, $\lambda$ = 14, $\mu$ = 2.5 | Online Detection on six Single NCS2s <br/> (YOLOv3, $\sigma$ is set to $\lambda$) <br/> $\sigma$ = 14, $\lambda$ = 14, $\mu$ = 14.8  |
 |:---:|:---:|
-| [![ETH-Sunnyday Online Detection (YOLOv3, 1 NCS2, with dropped frames)](https://j.gifs.com/oVDN2j.gif)](https://youtu.be/ZIks3oOGx8M) | [![ETH-Sunnyday Online Detection (YOLOv3, 6 NCS2)](https://j.gifs.com/k8yJR5.gif)](https://youtu.be/0xu_d2RJ6YA) |
+| [![ETH-Sunnyday Online Detection (YOLOv3, 1 NCS2, $\sigma$ is set to $\lambda$)](https://j.gifs.com/oVDN2j.gif)](https://youtu.be/ZIks3oOGx8M) | [![ETH-Sunnyday Online Detection (YOLOv3, 6 NCS2, $\sigma$ is set to $\lambda$)](https://j.gifs.com/k8yJR5.gif)](https://youtu.be/0xu_d2RJ6YA) |
