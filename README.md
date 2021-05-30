@@ -1,4 +1,4 @@
-# EVA:  Edge Video Analytics
+# Fast-EVA:  Fast Edge Video Analytics
 
 ## Demo Videos
 
