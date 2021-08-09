@@ -23,4 +23,4 @@ The first result from our project EVA is to address the above problems by exploi
 
 This research is partially sponsored by Cisco and our first joint paper below documented the results produced by June 2021:
 
-* Yanzhao Wu, Ling Liu, Ramana Kompella, in IEEE 2021 CogMI Special Session on Edge Analytics, Dec. 2021. Also available on ArXiv at https://arxiv.org/abs/2107.12563.
+* Yanzhao Wu, Ling Liu, Ramana Kompella."Parallel Detection for Efficient Video Analytics at the Edge." to appear in IEEE 2021 CogMI Special Session on Edge Analytics, Dec. 2021. Also available on arXiv at [https://arxiv.org/abs/2107.12563](https://arxiv.org/abs/2107.12563).
