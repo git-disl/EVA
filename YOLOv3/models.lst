@@ -1,0 +1,4 @@
+# This file can be used with the --list option of the model downloader.
+# Use OpenVINO model downloader to download the model files
+yolo-v3-tf
+yolo-v3-tiny-tf

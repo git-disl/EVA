@@ -1,0 +1,429 @@
+#include <thread>
+#include <iostream>
+#include <queue> 
+#include <fstream>
+#include <iostream>
+#include <experimental/filesystem>
+#include <string>
+#include <list>
+#include <chrono>
+#include <functional>
+#include <random>
+#include <memory>
+#include <vector>
+#include <algorithm>
+#include <iterator>
+
+#include <gflags/gflags.h>
+
+#include <inference_engine.hpp>
+#include <ngraph/ngraph.hpp>
+
+
+#include <opencv2/opencv.hpp>
+
+#include <stdlib.h>     /* getenv */
+
+using namespace cv;
+using namespace InferenceEngine::details;
+using namespace InferenceEngine;
+
+namespace fs = std::experimental::filesystem;
+typedef std::chrono::milliseconds ms;
+
+static const char help_message[]   = "Print a usage message";
+static const char input_message[]  = "Required. Path to folder of images to input";
+static const char model_message[]  = "Required. Path to model file.";
+static const char devices_message[]  = "Required. Number devices.";
+static const char labels_message[]  = "Required. Labels file.";
+static const char outfile_message[] = "Required. Output file.";
+
+DEFINE_bool(h, false, help_message);
+DEFINE_string(imgpath, "", input_message);
+DEFINE_string(model, "", model_message);
+DEFINE_int32(num_device, 0, devices_message);
+DEFINE_string(labelpath, "", labels_message);
+DEFINE_string(outfilepath, "./tmp.txt", outfile_message);
+
+std::vector<std::string> labeldata;
+
+void createLabels(std::string path){
+    std::ifstream file(path);
+    std::string line;
+    while (std::getline(file, line)){
+        std::istringstream iss(line);
+        std::string label;
+        if (!(iss >> label)) { break; } // error
+
+        labeldata.push_back(label);
+    }
+}
+
+template <typename T>
+void matU8ToBlob(const cv::Mat& orig_image, Blob::Ptr& blob, float scaleFactor = 1.0, int batchIndex = 0) {
+    SizeVector blobSize = blob->getTensorDesc().getDims();
+    const size_t width = blobSize[3];
+    const size_t height = blobSize[2];
+    const size_t channels = blobSize[1];
+    T* blob_data = blob->buffer().as<T*>();
+
+    cv::Mat resized_image(orig_image);
+    if (static_cast<int>(width) != orig_image.size().width || 
+        static_cast<int>(height)!= orig_image.size().height) {
+        cv::resize(orig_image, resized_image, cv::Size(width, height));
+    }
+
+    int batchOffset = batchIndex * width * height * channels;
+
+    for (size_t c = 0; c < channels; c++) {
+        for (size_t  h = 0; h < height; h++) {
+            for (size_t w = 0; w < width; w++) {
+                blob_data[batchOffset + c * width * height + h * width + w] =
+                    resized_image.at<cv::Vec3b>(h, w)[c] * scaleFactor;
+            }
+        }
+    }
+}
+
+void frameToBlob(const cv::Mat& frame,
+                 InferRequest::Ptr& inferRequest,
+                 const std::string& inputName) {
+    /* Resize and copy data from the image to the input blob */
+    Blob::Ptr frameBlob = inferRequest->GetBlob(inputName);
+    matU8ToBlob<uint8_t>(frame, frameBlob);
+}
+
+class Detection{
+    public:
+        int xmin, ymin, xmax, ymax;
+        float confidence;
+        int label;
+        Detection(int _xmin, int _ymin, int _xmax, int _ymax, float _conf, int _label) {
+            this->xmin = _xmin;
+            this->ymin = _ymin;
+            this->xmax = _xmax;
+            this->ymax = _ymax;
+            this->confidence = _conf;
+            this-> label = _label;
+        }
+};
+
+class NcsClassifier{
+	public:
+		int id;
+		int current_request_id;
+		int next_request_id;
+		std::queue<std::pair<int,Mat> > queue;
+        std::vector<std::pair<int, Detection> >* results;
+		std::string inputName;
+        std::string outputName;
+		int maxProposalCount;
+		int objectSize;
+		ExecutableNetwork executable_network;
+		InferRequest::Ptr async_infer_request_next;
+		InferRequest::Ptr async_infer_request_curr;
+		NcsClassifier(int id, std::queue<std::pair<int, Mat> > queue, std::string model_xml);
+		void load_model(std::string model_xml);
+		void predict_async(int imgIdx, Mat image);
+
+        // Performance Counter
+        int * num_frame_processed;
+};
+
+NcsClassifier::NcsClassifier(int id, std::queue<std::pair<int, Mat> > queue, std::string model_xml){
+	    this->id = id;
+        this->current_request_id = 0;
+        this->next_request_id = 1;
+        this->queue = queue;
+        this->results = new std::vector<std::pair<int, Detection> >();
+        load_model(model_xml);
+		std::cout << "NcsClassifier completed" << std::endl;
+
+        this->num_frame_processed = new int;
+        *this->num_frame_processed = 0;
+}
+
+void NcsClassifier::load_model(std::string model_xml){
+	// ---------------------1. Load inference engine ---------------------------------------------------------------------
+        std::cout << "Loading Inference Engine" << std::endl;
+        Core ie;
+        std::cout << "Device info" << std::endl;
+        //std::cout << ie.GetVersions("MYRIAD")        
+	// ---------------------2. Read IR Generated by ModelOptimizer (.xml and .bin files) -----------------------
+        std::cout << "Loading network files" << std::endl;
+        auto cnnNetwork = ie.ReadNetwork(model_xml);
+        /** Set batch size to 1 **/
+        std::cout << "Batch size is forced to  1." << std::endl;
+        cnnNetwork.setBatchSize(1);
+        /** Read labels (if any)**/
+        fs::path p(model_xml);
+        std::cout << p.stem().string() << std::endl;
+        std::string labelFileName = p.stem().string() + ".labels";
+        std::vector<std::string> labels;
+        std::ifstream inputFile(labelFileName);
+        std::copy(std::istream_iterator<std::string>(inputFile),
+                  std::istream_iterator<std::string>(),
+                  std::back_inserter(labels));
+		// -----------------------------------------------------------------------------------------------------
+
+        /** SSD-based network should have one input and one output **/
+        // --------------------------- 3. Configure input & output ---------------------------------------------
+        // --------------------------- Prepare input blobs -----------------------------------------------------
+        std::cout << "Checking that the inputs are as the demo expects" << std::endl;
+        InputsDataMap inputInfo(cnnNetwork.getInputsInfo());
+        if (inputInfo.size() != 1) {
+            throw std::logic_error("This demo accepts networks having only one input");
+        }
+        InputInfo::Ptr& input = inputInfo.begin()->second;
+        this->inputName = inputInfo.begin()->first;
+        input->setPrecision(Precision::U8);
+        input->getInputData()->setLayout(Layout::NCHW);
+      
+        // --------------------------- Prepare output blobs -----------------------------------------------------
+        std::cout << "Checking that the outputs are as the demo expects" << std::endl;
+        OutputsDataMap outputInfo(cnnNetwork.getOutputsInfo());
+        if (outputInfo.size() != 1) {
+            throw std::logic_error("This demo accepts networks having only one output");
+        }
+        DataPtr& output = outputInfo.begin()->second;
+        this->outputName = outputInfo.begin()->first;
+        int num_classes = 0;
+        if (auto ngraphFunction = cnnNetwork.getFunction()) {
+            for (const auto op : ngraphFunction->get_ops()) {
+                if (op->get_friendly_name() == outputName) {
+                    auto detOutput = std::dynamic_pointer_cast<ngraph::op::DetectionOutput>(op);
+                    if (!detOutput) {
+                        throw std::logic_error("Object Detection network output layer(" + op->get_friendly_name() +
+                            ") should be DetectionOutput, but was " +  op->get_type_info().name);
+                    }
+
+                    num_classes = detOutput->get_attrs().num_classes;
+                    break;
+                }
+            }
+        } else if (!labels.empty()) {
+            throw std::logic_error("Class labels are not supported with IR version older than 10");
+        }
+        
+        if (!labels.empty() && static_cast<int>(labels.size()) != num_classes) {
+            if (static_cast<int>(labels.size()) == (num_classes - 1))  // if network assumes default "background" class, having no label
+                labels.insert(labels.begin(), "fake");
+            else {
+                throw std::logic_error("The number of labels is different from numbers of model classes");
+            }                
+        }
+
+        const SizeVector outputDims = output->getTensorDesc().getDims();
+        this->maxProposalCount = outputDims[2];
+        this->objectSize = outputDims[3];
+        if (objectSize != 7) {
+            throw std::logic_error("Output should have 7 as a last dimension");
+        }
+        if (outputDims.size() != 4) {
+            throw std::logic_error("Incorrect output dimensions for SSD");
+        }
+        output->setPrecision(Precision::FP32);
+        output->setLayout(Layout::NCHW);
+        // -----------------------------------------------------------------------------------------------------
+
+        //---------------------4. Loading model to the plugin -----------------------------------------------------
+        std::cout << "Loading model to the plugin" << std::endl;
+	this->executable_network = ie.LoadNetwork(cnnNetwork, "MYRIAD", {}); 
+		// ---------------------5. Create infer request ------------------------------------------------------------
+        std::cout << "Create infer request" << std::endl;
+	this->async_infer_request_next = executable_network.CreateInferRequestPtr();
+	this->async_infer_request_curr = executable_network.CreateInferRequestPtr();
+}
+
+void NcsClassifier::predict_async(int imgIdx, Mat image){
+	// --------------------------- 6. Do inference ---------------------------------------------------------
+	
+	frameToBlob(image, this->async_infer_request_curr, this->inputName);
+
+	//this->async_infer_request_next->StartAsync();
+	this->async_infer_request_curr->StartAsync();
+    //this->async_infer_request_curr->Wait(IInferRequest::WaitMode::RESULT_READY);
+	
+	if (OK == this->async_infer_request_curr->Wait(IInferRequest::WaitMode::RESULT_READY)) {
+		// ---------------------------Process output blobs--------------------------------------------------
+                // Processing results of the CURRENT request
+                const float *detections = async_infer_request_curr->GetBlob(this->outputName)->buffer().as<PrecisionTrait<Precision::FP32>::value_type*>();
+                for (int i = 0; i < this->maxProposalCount; i++) {
+                    //float image_id = detections[i * objectSize + 0];
+                    int label = static_cast<int>(detections[i * objectSize + 1]);
+                    float confidence = detections[i * objectSize + 2];                   
+                    size_t width = image.cols;
+                    size_t height = image.rows;
+                    int xmin = detections[i * objectSize + 3] * width;
+                    int ymin = detections[i * objectSize + 4] * height;
+                    int xmax = detections[i * objectSize + 5] * width;
+                    int ymax = detections[i * objectSize + 6] * width;
+                    this->results->push_back({imgIdx, {xmin, ymin, xmax, ymax, confidence, label}});
+                    //std::cout << imgIdx << "," << xmin << "," << ymin << "," << xmax << "," << ymax << "," << confidence << std::endl;
+                    //std::cout << this->results.size() << std::endl;
+                    // std::cout << "Image Size: Width " << width << " Height " << height << std::endl;
+                    // if (image_id < 0) {
+                    //     std::cout << "Only " << i << " proposals found" << std::endl;
+                    //     break;
+                    // }
+                    // if(confidence>0.75){
+                    //     std::cout <<  "Device: " << this->id <<" [" << i << "," << labeldata.at(label-1)<< "] element, prob = " << confidence
+                    //           << std::endl;
+                    // }
+                }
+	}
+	(*this->num_frame_processed) ++;
+	// Final point:
+    // in the truly Async mode we swap the NEXT and CURRENT requests for the next iteration
+	// this->async_infer_request_curr.swap(this->async_infer_request_next);
+}
+
+void inference_job_async(std::queue<std::pair<int, Mat> > & job_queue, NcsClassifier ncs_classifer){
+    std::cout << "Starting Inference, Job Queue: " << job_queue.size() << std::endl;
+    int xidx = 0;
+    Mat xfile;
+    while (!job_queue.empty()){
+        xidx = job_queue.front().first;
+        xfile = job_queue.front().second;
+        //std::cout << "Inference on " << job_queue.front().first << std::endl;
+        job_queue.pop();
+        ncs_classifer.predict_async(xidx, xfile);
+    }
+    // One extra images;
+    //ncs_classifer.predict_async(xidx+1, xfile);
+    std::cout << "In inference_job_async " << ncs_classifer.results->size() << std::endl;
+}
+
+class Scheduler{
+	public:
+	    std::queue<std::pair<int, Mat> > queue;
+        std::list<NcsClassifier> workers;
+	    Scheduler(int deviceids[], int size, std::string model_xml);
+     	void init_workers(int ids[], int size, std::string model_xml);
+   	    void start(std::list <std::string> xfilelist, std::string outfilepath);
+};
+
+Scheduler::Scheduler(int deviceids[], int size, std::string model_xml){
+    init_workers(deviceids, size, model_xml);
+}
+
+void Scheduler::init_workers(int ids[], int size, std::string model_xml){
+    for (int id=0; id<=size-1; id++){
+        std::cout << "creating NcsClassifier for Device " << id << std::endl;
+        this->workers.push_back(NcsClassifier(ids[id], this->queue, model_xml));
+    }
+}
+
+void Scheduler::start(std::list <std::string> xfilelist, std::string outfilepath){
+    // start the workers
+    std::vector<std::thread> threads;
+
+    //add producer thread for image pre-processing
+    int i = 0;
+    for (std::string mfile : xfilelist){
+        Mat image = imread(mfile);
+        this->queue.push({i, image});
+        i++;
+    }
+
+    std::chrono::high_resolution_clock::time_point start_time = std::chrono::high_resolution_clock::now();
+    // schedule workers
+    for (auto const& worker : this->workers){
+	    threads.push_back(std::thread(inference_job_async, std::ref(this->queue), worker));
+    }
+
+    // wait for all workers finish
+    for (std::thread & th : threads){
+	    th.join();
+    }
+
+    for (auto const& worker : this->workers) {
+        std::cout << "Just after join " << worker.results->size() << std::endl;
+    }
+
+    std::chrono::high_resolution_clock::time_point end_time = std::chrono::high_resolution_clock::now();
+    auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(end_time-start_time);
+    auto ms = milliseconds.count();
+    std::cout << "Processing time in ms: " << ms << std::endl;
+
+    // Save results. TODO: make it better
+    std::ofstream outfile;
+    outfile.open(outfilepath);
+    //std::cout << this->workers.size() << std::endl;
+    for (auto const& worker : this->workers) {
+        std::cout << "Worker ID: " << worker.id << *worker.num_frame_processed << std::endl;
+        for (auto const & p : *worker.results) {
+            int imgIdx = p.first;
+            Detection d = p.second;
+            //std::cout << imgIdx << "," << d.xmin << "," << d.ymin << "," << d.xmax << "," << d.ymax << "," << d.confidence << "," << d.label << std::endl;
+            outfile << (imgIdx+1) << "," << d.xmin << "," << d.ymin << "," << d.xmax << "," << d.ymax << "," << d.confidence << "," << d.label << std::endl;
+        }
+    }
+    outfile.close();
+}
+
+void run(std::string img_path,int device_ids[], int size, std::string model_xml, std::string outfilepath){
+    // scan all files under img_path
+    std::list<std::string> xlist;
+    for (const auto& xfile : fs::directory_iterator(img_path)){
+        xlist.push_back(xfile.path());
+    }
+    xlist.sort();
+    // for (const auto & xfile: xlist) {
+    //         std::cout << xfile << std::endl;
+    // }
+    //init scheduler
+    Scheduler x = Scheduler(device_ids, size, model_xml);
+
+    // start processing and wait for complete
+    x.start(xlist, outfilepath);
+}
+	
+void showUsage()
+{
+    std::cout << std::endl;
+    std::cout << "[usage]" << std::endl;
+    std::cout << "\tutorial1 [option]" << std::endl;
+    std::cout << "\toptions:" << std::endl;
+    std::cout << std::endl;
+    std::cout << "\t\t-h              " << help_message << std::endl;
+    std::cout << "\t\t-imgpath <path>       " << input_message << std::endl;
+    std::cout << "\t\t-model <path>   " << model_message << std::endl;
+	std::cout << "\t\t-num_device #   " << devices_message << std::endl;
+	std::cout << "\t\t-labelpath <path>   " << labels_message << std::endl;
+    std::cout << "\t\t-outfilepath <path> " << outfile_message << std::endl;
+}
+
+
+int main(int argc, char *argv[]) {
+
+	gflags::ParseCommandLineNonHelpFlags(&argc, &argv, true);
+
+	if (FLAGS_num_device == 0) {
+		showUsage();
+		return 1;
+	}
+	if ((FLAGS_imgpath.empty())||(FLAGS_model.empty())) {
+		std::cout << "ERROR: input and model file required" << std::endl;
+		showUsage();
+		return 1;
+	}
+    
+    int device_ids[FLAGS_num_device];
+    for (int i=0; i<FLAGS_num_device; ++i){
+        device_ids[i] = i;
+    }
+    int size = FLAGS_num_device;
+    std::cout << "Number Devices:" << std::endl;
+    std::cout << size  << std::endl;
+
+    std::cout << "imgpath \n";
+    std::cout << FLAGS_imgpath;
+    std::cout << "\ndevice ids \n";
+    for (int elem : device_ids)
+        std::cout << elem << '\n';
+
+    createLabels(FLAGS_labelpath);
+    run(FLAGS_imgpath, device_ids, size, FLAGS_model, FLAGS_outfilepath);
+}
+

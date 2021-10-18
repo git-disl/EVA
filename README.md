@@ -24,3 +24,11 @@ The first result from our project EVA is to address the above problems by exploi
 This research is partially sponsored by Cisco and our first joint paper below documented the results produced by June 2021:
 
 * Yanzhao Wu, Ling Liu, Ramana Kompella."Parallel Detection for Efficient Video Analytics at the Edge." to appear in IEEE 2021 CogMI Special Session on Edge Analytics, Dec. 2021. Also available on arXiv at [https://arxiv.org/abs/2107.12563](https://arxiv.org/abs/2107.12563).
+
+
+This project is developed based on the following resources:
+
+* [OpenVINO Toolkit](https://github.com/openvinotoolkit/openvino)
+* [OpenVINO Toolkit - Open Model Zoo](https://github.com/openvinotoolkit/open_model_zoo)
+* [OpenVINO-YoloV3](https://github.com/PINTO0309/OpenVINO-YoloV3)
+* [Intel Tutorial on Multiple NCSs](https://www.intel.com/content/www/us/en/developer/articles/technical/leverage-multiple-intel-neural-compute-sticks-with-intel-distribution-of-openvino-toolkit.html)
