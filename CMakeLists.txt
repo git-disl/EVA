@@ -4,7 +4,7 @@
 
 cmake_minimum_required (VERSION 3.10)
 
-project(ODCPP)
+project(EVA)
 
 option(ENABLE_PYTHON "Whether to build extension modules for Python demos" OFF)
 
