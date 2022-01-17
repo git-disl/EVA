@@ -211,7 +211,7 @@ int main(int argc, char *argv[]) {
         InputsDataMap inputInfo(cnnNetwork.getInputsInfo());
 
         std::string imageInputName, imageInfoInputName;
-        size_t netInputHeight, netInputWidth;
+        size_t netInputHeight = 300, netInputWidth = 300; // init for avoiding issues
 
         for (const auto& inputInfoItem : inputInfo) {
             if (inputInfoItem.second->getTensorDesc().getDims().size() == 4) {  // 1st input contains images
